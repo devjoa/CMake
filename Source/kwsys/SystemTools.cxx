@@ -750,26 +750,22 @@ static int kwsysUnPutEnv(std::string const& env)
 }
 
 #elif defined(_WIN32)
-/* putenv("A=") places "A=" in the environment, which is as close to
-   removal as we can get with the putenv API.  We have to leak the
-   most recent value placed in the environment for each variable name
-   on program exit in case exit routines access it.  */
-
 static kwsysEnvSet kwsysUnPutEnvSet;
 
 static int kwsysUnPutEnv(std::string const& env)
 {
   std::wstring wEnv = Encoding::ToWide(env);
   size_t const pos = wEnv.find('=');
-  size_t const len = pos == std::string::npos ? wEnv.size() : pos;
-  wEnv.resize(len + 1, L'=');
+  if (pos != std::string::npos) {
+    wEnv.resize(pos, L'\0');
+  }
   wchar_t* newEnv = _wcsdup(wEnv.c_str());
   if (!newEnv) {
     return -1;
   }
   kwsysEnvSet::Free oldEnv(kwsysUnPutEnvSet.Release(newEnv));
   kwsysUnPutEnvSet.insert(newEnv);
-  return _wputenv(newEnv);
+  return SetEnvironmentVariableW(newEnv, nullptr) ? 0 : -1;
 }
 
 #else
@@ -846,7 +842,7 @@ public:
   bool Put(char const* env)
   {
 #  if defined(_WIN32)
-    std::wstring const wEnv = Encoding::ToWide(env);
+    std::wstring wEnv = Encoding::ToWide(env);
     wchar_t* newEnv = _wcsdup(wEnv.c_str());
 #  else
     char* newEnv = strdup(env);
@@ -854,7 +850,14 @@ public:
     Free oldEnv(this->Release(newEnv));
     this->insert(newEnv);
 #  if defined(_WIN32)
-    return _wputenv(newEnv) == 0;
+    size_t const pos = wEnv.find('=');
+    if (pos == std::string::npos) {
+      return -1;
+    }
+    std::wstring wVal = wEnv.substr(pos+1);
+    wEnv.resize(pos, L'\0');
+
+    return SetEnvironmentVariableW(wEnv.c_str(), wVal.c_str());
 #  else
     return putenv(newEnv) == 0;
 #  endif
